@@ -969,3 +969,5 @@ mod tests;
 mod tests_page;
 #[cfg(test)]
 mod tests_title;
+#[cfg(test)]
+mod tests_chinese;
