@@ -163,6 +163,7 @@ pub fn parse(src: &str) -> Result<Script, FdxError> {
     // `DialogueBreaks`: (MORE)/(CONT'D) at page breaks, automatic (CONT'D).
     let mut dialogue_breaks: Option<(Option<bool>, Option<bool>)> = None;
     let mut scene_letters = false;
+    let mut screenplay_profile = scriptcraft_doc::ScreenplayProfile::Hollywood;
     let mut track_on = false;
     let mut page_read = page::Read::default();
     let mut rev_read = revision::Read::default();
@@ -297,6 +298,9 @@ pub fn parse(src: &str) -> Result<Script, FdxError> {
                     }
                     "ScriptCraftFormat" if !in_title => {
                         scene_letters = attr("SceneLetters").is_some_and(|v| v.trim().eq_ignore_ascii_case("yes"));
+                        if let Some(profile) = attr("ScreenplayProfile").and_then(|v| scriptcraft_doc::ScreenplayProfile::parse(&v)) {
+                            screenplay_profile = profile;
+                        }
                     }
                     "ScriptCraftProduction" if !in_title => {
                         let yes = |k: &str| attr(k).is_some_and(|v| v.trim().eq_ignore_ascii_case("yes"));
@@ -534,6 +538,7 @@ pub fn parse(src: &str) -> Result<Script, FdxError> {
     let mut s = Script { paras, structure_tail: tail, ..Script::default() };
     s.settings.elements = formats;
     s.settings.scene_letters = scene_letters;
+    s.settings.screenplay_profile = screenplay_profile;
     s.settings.track.on = track_on;
     // Final Draft shows a scene's number whenever it has one, in the margins its options say.
     if let Some(show) = scene_number_options {
@@ -912,8 +917,12 @@ pub fn write(s: &Script) -> String {
     if s.structure_count() > 0 {
         outline::write_settings(&mut out);
     }
-    if s.settings.scene_letters {
-        out.push_str("  <ScriptCraftFormat SceneLetters=\"Yes\"/>\n");
+    if s.settings.scene_letters || !s.settings.screenplay_profile.is_default() {
+        out.push_str(&format!(
+            "  <ScriptCraftFormat SceneLetters=\"{}\" ScreenplayProfile=\"{}\"/>\n",
+            if s.settings.scene_letters { "Yes" } else { "No" },
+            s.settings.screenplay_profile.id()
+        ));
     }
     page::write(&mut out, &s.settings.page);
     track::write_root(&mut out, s);
