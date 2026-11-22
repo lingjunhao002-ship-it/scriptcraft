@@ -951,3 +951,28 @@ mod compat_tests;
 #[cfg(test)]
 #[path = "v04_tests.rs"]
 mod v04_tests;
+
+
+#[cfg(test)]
+mod chinese_profile_tests {
+    use super::*;
+    use scriptcraft_doc::{Element, ElementFormats, Para, Paper, ScreenplayProfile};
+
+    #[test]
+    fn chinese_fdx_roundtrip_preserves_profile_and_paper() {
+        let mut script = Script::from_paras(vec![
+            Para::new(Element::SceneHeading, "1. [内] 夜 咖啡馆"),
+            Para::new(Element::Character, "林晚"),
+            Para::new(Element::Dialogue, "我知道你会来。"),
+        ]).expect("script");
+        script.settings.screenplay_profile = ScreenplayProfile::MainlandChina;
+        script.settings.elements = ElementFormats::for_profile(ScreenplayProfile::MainlandChina);
+        script.settings.page.paper = Paper::A4;
+        let xml = write(&script);
+        assert!(xml.contains("ScreenplayProfile=\\\"mainlandChina\\\""));
+        let parsed = parse(&xml).expect("fdx");
+        assert_eq!(parsed.settings.screenplay_profile, ScreenplayProfile::MainlandChina);
+        assert_eq!(parsed.settings.page.paper, Paper::A4);
+        assert_eq!(parsed.paras[0].text, script.paras[0].text);
+    }
+}
