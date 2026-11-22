@@ -98,6 +98,19 @@ impl PageMetrics {
         if self.wide_chars { display_cells(text) } else { text.chars().count() }
     }
 
+    /// Width of one Unicode scalar in screenplay half-width cells.
+    pub fn char_cells(self, ch: char) -> usize {
+        if !self.wide_chars {
+            1
+        } else if zero_width(ch) {
+            0
+        } else if full_width(ch) {
+            2
+        } else {
+            1
+        }
+    }
+
     /// Available body rows for a page of the supplied height.
     pub fn body_rows(self, page_height_pt: f32) -> usize {
         let available = page_height_pt - self.top_margin_pt - self.bottom_margin_pt;
