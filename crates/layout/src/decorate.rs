@@ -2,14 +2,18 @@
 
 use scriptcraft_doc::page_setup::{Fields, HeaderFooter, expand};
 use scriptcraft_doc::{Paper, Script};
-use scriptcraft_geom::{CHAR_W, LINE_H, inch};
+use scriptcraft_geom::{CHAR_W, LINE_H, PageMetrics, ScreenplayProfile, inch};
 
 use crate::{LineKind, Page, deco};
 
 /// Rows of body text on a page of `paper` (54 on Letter, 58 on A4).
 pub fn body_rows(paper: Paper) -> usize {
-    let r = (paper.height_pt() - scriptcraft_geom::TOP - scriptcraft_geom::BOTTOM) / LINE_H;
-    if r.is_finite() && r >= 1.0 { r as usize } else { 1 }
+    body_rows_for(ScreenplayProfile::Hollywood, paper)
+}
+
+/// Available rows for a chosen screenplay format.
+pub fn body_rows_for(profile: ScreenplayProfile, paper: Paper) -> usize {
+    PageMetrics::for_profile(profile).body_rows(paper.height_pt())
 }
 
 /// Header and footer text of one page, by slot (left, centre, right), fields filled in. A slot
@@ -60,11 +64,12 @@ pub(crate) fn revisions(script: &Script, pages: &mut [Page], paper: Paper) -> Ve
 /// `i` (for the `{revision}` fields).
 pub(crate) fn headers(script: &Script, pages: &mut [Page], page_rev: &[Option<u8>], paper: Paper) {
     let setup = &script.settings.page;
+    let metrics = PageMetrics::for_profile(script.settings.screenplay_profile);
     let total = pages.iter().filter(|p| !p.title_page).count();
     let t = &script.title;
     let page_w = paper.width_pt();
     let (left, right) = (inch(1.5), page_w - inch(1.0));
-    let footer_y = paper.height_pt() - inch(0.5) - LINE_H;
+    let footer_y = paper.height_pt() - inch(0.5) - metrics.line_height_pt;
     for (i, page) in pages.iter_mut().enumerate() {
         let first_script = !page.title_page && page.number == Some(1);
         // The printed label (12A when pages are locked), else the page's number.
@@ -84,7 +89,7 @@ pub(crate) fn headers(script: &Script, pages: &mut [Page], page_rev: &[Option<u8
         let show = |first_page: bool| if title { setup.header_on_title_page } else { !first_script || first_page };
         let add = |hf: &HeaderFooter, y: f32, kind: LineKind, page: &mut Page| {
             let [l, c, r] = slots(hf, &f);
-            let w = |s: &str| s.chars().count() as f32 * CHAR_W;
+            let w = |s: &str| metrics.cells(s) as f32 * metrics.cell_width_pt;
             if !l.is_empty() {
                 page.lines.push(deco(kind, left, y, &l));
             }
