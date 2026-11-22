@@ -520,7 +520,7 @@ pub fn is_character(line: &str) -> bool {
     // every Chinese action paragraph followed by another line becomes a character cue.
     let is_han = |c: char| matches!(c as u32, 0x3400..=0x9FFF | 0x20000..=0x3FFFD);
     if name.chars().any(is_han) {
-        name.chars().count() <= 8 && name.chars().all(|c| is_han(c) || c == '·')
+        name.chars().count() <= 4 && name.chars().all(|c| is_han(c) || c == '·')
     } else {
         true
     }
