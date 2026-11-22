@@ -487,7 +487,13 @@ pub fn is_heading(line: &str) -> bool {
     let digits = text.bytes().take_while(|b| b.is_ascii_digit()).count();
     let after_number = text.get(digits..).unwrap_or("");
     let (rest, numbered) = if digits > 0 {
-        let rest = after_number.strip_prefix(['.', '．', '、', ' ']).map(str::trim_start);
+        let rest = after_number.chars().next().and_then(|mark| {
+            if matches!(mark, '.' | '．' | '、' | ' ') {
+                after_number.get(mark.len_utf8()..).map(str::trim_start)
+            } else {
+                None
+            }
+        });
         (rest.unwrap_or(text), rest.is_some())
     } else {
         (text, false)
