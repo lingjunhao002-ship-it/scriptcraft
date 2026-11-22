@@ -1,6 +1,6 @@
 # 中国大陆影视剧本排版档案（首版规范）
 
-> 状态：首版规范与排版指标模块已建立；完整字体嵌入、页面渲染、导出和 Windows 验收仍在开发中。
+> 状态：中文档案、文本度量、初版换行、布局、egui 预览、PDF 字体加载入口、Fountain 中文标题识别和 FDX profile 往返代码已提交。字体尚未随仓库打包，Windows/Rust CI 尚未确认通过；当前不属于已验收版本。
 >
 > 本档案面向中国大陆电影、电视剧和网络剧的常见文学剧本。行业并不存在适用于所有制片方、平台、导演和征稿活动的唯一排版标准；交付时必须优先使用接收方给定的模板。
 
@@ -96,3 +96,44 @@
 - 清华大学出版社《电视编辑实用手册》关于中国大陆格式常先标场号，再标地点、内外景、时间，并说明正文顺序可调整的介绍。
 - 中国政法大学相关影视文学课程材料强调场景应标明地点、日/夜、内/外景和人物，并指出剧本格式需服务拍摄。
 - 不同征稿/制片单位可能另行规定宋体、字号、段首缩进和页码位置，因此项目模板优先级高于本档案默认值。
+
+
+## 9. 当前字体提供方式（开发/验收用）
+
+首版开发代码从以下位置寻找经许可再分发的简体中文 OpenType 字体：
+
+1. 系统环境变量 `SCRIPTCRAFT_CJK_FONT` 指向一份可供本程序合法使用和嵌入的 OTF 字体，例如在 PowerShell 中：`$env:SCRIPTCRAFT_CJK_FONT = "D:\\fonts\\NotoSansSC-Regular.otf"`。
+2. 未设置环境变量时，原生应用查找可执行文件旁的 `fonts/NotoSansSC-Regular.otf`。
+
+运行前必须自行取得真实、受信任的字体文件并确认其许可；**目前 GitHub 仓库没有随附该字体文件**。若中文 PDF 导出找不到可用的字体，导出返回 `PdfError::Font`，不会默默输出缺失汉字的 Courier PDF。输入文件必须由字体解析器可读取；暂不保证 TTC/变量字体格式都能使用。
+
+这是供开发测试的临时接入方式。发布 Windows 安装包时应固定 Noto Sans SC 的精确版本与来源，将已审计的静态字体与 OFL 许可文件和 ATTRIBUTION 一并纳入分发，并验证签名、字形覆盖与子集嵌入。
+
+### 已知限制
+
+- 现有东亚宽度是近似的全角/半角单元宽度，**不是**真正的字体 shaping/字体实际 advance；复杂 emoji、连字、字距调整可能仍与 PDF 字体度量不同。
+- 括号、标点避头尾是初版启发式，不应视作完整 UAX #14 实现；下一阶段评估 `unicode-linebreak` 等成熟 Rust 库或兼容字形分段方案。
+- 画布中注释、修订范围、双人对白等附加层仍含固定 Courier 度量，需要继续迁移。
+- CJK PDF 暂用一份 regular 字体渲染多种字重；真正的粗体/斜体支持要等多字重字体资源可用后完成。
+- Fountain 不能天然保存所有分页与字体参数；FDX 通过 `ScriptCraftFormat ScreenplayProfile` 扩展保存档案标识。第三方 FDX 编辑器可能忽略本扩展。
+- 中文人物名的自动识别目前只针对简短汉字姓名，较长艺名和带角色标注的非标准写法应让用户显式指定人物段落。
+
+## 10. 当前实现文件
+
+| 文件 | 内容 |
+|---|---|
+| `crates/geom/src/chinese.rs` | 中文宽度与换行基础 |
+| `crates/doc/src/lib.rs` | 文档档案持久化 |
+| `crates/doc/src/format.rs` | 中文元素默认缩进 |
+| `crates/engine/src/cmd/page.rs` | 档案切换命令 |
+| `crates/engine/src/typing.rs` | 中文场景标题输入识别 |
+| `crates/fountain/src/lib.rs` | 中文标题与人物名识别 |
+| `crates/fdx/src/lib.rs` | FDX 档案扩展存取 |
+| `crates/layout/src/lib.rs` | 中文分页、光标与标题页 |
+| `crates/layout/src/decorate.rs` | 页码、页眉、页脚 |
+| `crates/ui-egui/src/canvas.rs` | 中文画布字宽与选区 |
+| `crates/ui-egui/src/lib.rs` | 可用中文字体注册 |
+| `crates/pdf/src/lib.rs` | 中文 PDF 输出字体验证和绘制 |
+| `crates/layout/src/tests_chinese.rs` | A4、跨页、中文禁则、光标测试 |
+
+后续每次合并前必须在 Rust 1.95+ 环境执行 `cargo fmt --all -- --check`、`cargo xtask ci`、`cargo test --workspace` 和 Windows 构建。未经执行的命令不得标记为已通过。
