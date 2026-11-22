@@ -168,9 +168,6 @@ impl Line {
         push(at, self.text.len(), scriptcraft_doc::Style::PLAIN, &mut col, &mut out);
         out
     }
-    fn chars(&self) -> usize {
-        self.text.chars().count()
-    }
 }
 
 /// A laid-out page.
@@ -781,21 +778,23 @@ fn deco(kind: LineKind, x: f32, y: f32, text: &str) -> Line {
 fn title_page(script: &Script) -> Option<Page> {
     let t = &script.title;
     let paper = script.settings.page.paper;
+    let metrics = PageMetrics::for_profile(script.settings.screenplay_profile);
     let page_w = paper.width_pt();
     if !script.settings.title_page || t.is_empty() {
         return None;
     }
     if t.is_free_form() {
-        return Some(free_form_title_page(t, paper));
+        return Some(free_form_title_page(t, paper, metrics));
     }
     let mut lines = Vec::new();
-    let center = |s: &str| ((page_w - s.chars().count() as f32 * CHAR_W) / 2.0).max(inch(1.0));
+    let center = |s: &str| ((page_w - metrics.cells(s) as f32 * metrics.cell_width_pt) / 2.0).max(inch(1.0));
     let mut row = 18usize;
     let put_center = |lines: &mut Vec<Line>, v: &str, row: &mut usize| {
         for l in v.lines() {
-            for (s, e) in wrap(l.trim(), 60) {
+            let wrapped = if metrics.wide_chars { wrap_chinese(l.trim(), 60) } else { wrap(l.trim(), 60) };
+            for (s, e) in wrapped {
                 let text = l.trim().get(s..e).unwrap_or("");
-                lines.push(deco(LineKind::Title, center(text), TOP + *row as f32 * LINE_H, text));
+                lines.push(deco(LineKind::Title, center(text), metrics.top_margin_pt + *row as f32 * metrics.line_height_pt, text));
                 *row += 1;
             }
         }
@@ -811,45 +810,45 @@ fn title_page(script: &Script) -> Option<Page> {
     }
     // Contact (and copyright, notes) bottom-left; draft date bottom-right.
     let block: Vec<&str> = [&t.notes, &t.copyright, &t.contact].iter().flat_map(|v| v.lines()).map(str::trim).filter(|l| !l.is_empty()).collect();
-    let rows = body_rows(paper);
+    let rows = metrics.body_rows(paper.height_pt());
     let first = rows.saturating_sub(block.len()).max(row + 2);
     for (i, l) in block.iter().enumerate() {
-        lines.push(deco(LineKind::Title, inch(1.5), TOP + (first + i) as f32 * LINE_H, l));
+        lines.push(deco(LineKind::Title, inch(1.5), metrics.top_margin_pt + (first + i) as f32 * metrics.line_height_pt, l));
     }
     let dates: Vec<&str> = t.draft_date.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     let first = rows.saturating_sub(dates.len()).max(row + 2);
     for (i, l) in dates.iter().enumerate() {
-        let x = (page_w - inch(1.0) - l.chars().count() as f32 * CHAR_W).max(inch(1.0));
-        lines.push(deco(LineKind::Title, x, TOP + (first + i) as f32 * LINE_H, l));
+        let x = (page_w - inch(1.0) - metrics.cells(l) as f32 * metrics.cell_width_pt).max(inch(1.0));
+        lines.push(deco(LineKind::Title, x, metrics.top_margin_pt + (first + i) as f32 * metrics.line_height_pt, l));
     }
     Some(Page { number: None, label: String::new(), title_page: true, lines })
 }
 
 /// A free-form title page: one row per line from the top margin, between 1" from each edge of
 /// the paper (as Final Draft lays out title pages), wrapped; rows past the page are dropped.
-fn free_form_title_page(t: &scriptcraft_doc::TitlePage, paper: scriptcraft_doc::Paper) -> Page {
+fn free_form_title_page(t: &scriptcraft_doc::TitlePage, paper: scriptcraft_doc::Paper, metrics: PageMetrics) -> Page {
     let page_w = paper.width_pt();
     let (left, right) = (inch(1.0), page_w - inch(1.0));
-    let cols = (((right - left) / CHAR_W) as usize).max(10);
-    let rows = body_rows(paper);
+    let cols = (((right - left) / metrics.cell_width_pt) as usize).max(10);
+    let rows = metrics.body_rows(paper.height_pt());
     let mut lines = Vec::new();
     let mut row = 0usize;
     for l in &t.lines {
         let text = l.text.trim();
-        let parts = if text.is_empty() { vec![(0, 0)] } else { wrap(text, cols) };
+        let parts = if text.is_empty() { vec![(0, 0)] } else if metrics.wide_chars { wrap_chinese(text, cols) } else { wrap(text, cols) };
         for (s, e) in parts {
             if row >= rows {
                 break;
             }
             let piece = text.get(s..e).unwrap_or("").trim_end();
-            let w = piece.chars().count() as f32 * CHAR_W;
+            let w = metrics.cells(piece) as f32 * metrics.cell_width_pt;
             let x = match l.align {
                 scriptcraft_doc::Align::Left => left,
                 scriptcraft_doc::Align::Center => (left + (right - left - w) / 2.0).max(left),
                 scriptcraft_doc::Align::Right => (right - w).max(left),
             };
             if !piece.is_empty() {
-                let mut line = deco(LineKind::Title, x, TOP + row as f32 * LINE_H, piece);
+                let mut line = deco(LineKind::Title, x, metrics.top_margin_pt + row as f32 * metrics.line_height_pt, piece);
                 if !l.style.is_plain() {
                     line.spans = vec![scriptcraft_doc::Span { start: 0, end: piece.len(), style: l.style }];
                 }
