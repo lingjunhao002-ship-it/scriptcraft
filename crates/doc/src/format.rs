@@ -4,7 +4,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::Element;
+use crate::{Element, ScreenplayProfile};
 
 /// Horizontal alignment.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -117,6 +117,37 @@ impl ElementFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
 pub struct ElementFormats(pub [ElementFormat; 8]);
+
+impl ElementFormats {
+    /// Defaults for a screenplay profile. Existing documents retain the Hollywood defaults.
+    pub fn for_profile(profile: ScreenplayProfile) -> Self {
+        if profile == ScreenplayProfile::Hollywood {
+            return Self::default();
+        }
+        use Element::*;
+        let mut formats = Self::default();
+        let values = [
+            (SceneHeading, 1.0, 7.27, 1, Align::Left),
+            (Action, 1.0, 7.27, 1, Align::Left),
+            (Character, 2.5, 5.8, 1, Align::Center),
+            (Parenthetical, 2.0, 6.5, 0, Align::Left),
+            (Dialogue, 1.5, 7.0, 0, Align::Left),
+            (Transition, 1.0, 7.27, 1, Align::Right),
+            (Shot, 1.0, 7.27, 1, Align::Left),
+            (General, 1.0, 7.27, 0, Align::Left),
+        ];
+        for (element, left, right, before, align) in values {
+            let mut value = ElementFormat::default_for(element);
+            value.left = left;
+            value.right = right;
+            value.before = before;
+            value.align = align;
+            value.uppercase = false;
+            formats.set(element, value);
+        }
+        formats
+    }
+}
 
 impl Default for ElementFormats {
     fn default() -> Self {

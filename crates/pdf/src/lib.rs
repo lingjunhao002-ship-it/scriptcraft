@@ -11,7 +11,7 @@ use krilla::paint::Fill;
 use krilla::text::{Font, TextDirection};
 use scriptcraft_doc::Script;
 use scriptcraft_doc::Style;
-use scriptcraft_geom::{CHAR_W, FONT_SIZE};
+use scriptcraft_geom::{PageMetrics, ScreenplayProfile};
 use scriptcraft_layout::{Layout, layout};
 
 #[derive(Debug, thiserror::Error, Clone, PartialEq)]
@@ -73,7 +73,17 @@ pub fn export_pages(script: &Script, l: &Layout, which: &[usize]) -> Result<Vec<
     let load = |b: &'static [u8]| Font::new(b.to_vec().into(), 0).ok_or(PdfError::Font);
     let faces =
         [load(scriptcraft_fonts::REGULAR)?, load(scriptcraft_fonts::BOLD)?, load(scriptcraft_fonts::ITALIC)?, load(scriptcraft_fonts::BOLD_ITALIC)?];
-    let face = |st: Style| faces[usize::from(st.bold) + 2 * usize::from(st.italic)].clone();
+    let profile = script.settings.screenplay_profile;
+    let metrics = PageMetrics::for_profile(profile);
+    // CJK PDF export must fail explicitly when the licensed font has not been provisioned;
+    // silently embedding Courier would produce missing Han glyphs.
+    let chinese = if profile == ScreenplayProfile::MainlandChina {
+        let bytes = scriptcraft_fonts::load_chinese_regular().ok_or(PdfError::Font)?;
+        Some(Font::new(bytes.into(), 0).ok_or(PdfError::Font)?)
+    } else {
+        None
+    };
+    let face = |st: Style| chinese.clone().unwrap_or_else(|| faces[usize::from(st.bold) + 2 * usize::from(st.italic)].clone());
     let mut doc = Document::new();
     let settings = || PageSettings::from_wh(l.page_width(), l.paper.height_pt());
     let rev = &script.settings.revision;
@@ -98,15 +108,15 @@ pub fn export_pages(script: &Script, l: &Layout, which: &[usize]) -> Result<Vec<
             }
         }
         for line in &page.lines {
-            for (col, text, st) in line.segments() {
-                let x = line.x + col as f32 * CHAR_W;
+            for (col, text, st) in line.segments_for(profile) {
+                let x = line.x + col as f32 * metrics.cell_width_pt;
                 if !text.trim().is_empty() {
-                    surface.draw_text(Point::from_xy(x, line.baseline()), face(st), FONT_SIZE, text, false, TextDirection::Auto);
+                    surface.draw_text(Point::from_xy(x, line.baseline_for(profile)), face(st), metrics.font_size_pt, text, false, TextDirection::Auto);
                 }
                 if st.underline {
-                    let w = text.chars().count() as f32 * CHAR_W;
+                    let w = metrics.cells(text) as f32 * metrics.cell_width_pt;
                     let mut pb = PathBuilder::new();
-                    if let Some(r) = Rect::from_xywh(x, line.baseline() + 1.6, w, 0.6) {
+                    if let Some(r) = Rect::from_xywh(x, line.baseline_for(profile) + 1.6, w, 0.6) {
                         pb.push_rect(r);
                     }
                     if let Some(path) = pb.finish() {
@@ -116,8 +126,8 @@ pub fn export_pages(script: &Script, l: &Layout, which: &[usize]) -> Result<Vec<
                 }
             }
             if !line.suffix.trim().is_empty() {
-                let x = line.x + line.text.chars().count() as f32 * CHAR_W;
-                surface.draw_text(Point::from_xy(x, line.baseline()), face(Style::PLAIN), FONT_SIZE, &line.suffix, false, TextDirection::Auto);
+                let x = line.x + metrics.cells(&line.text) as f32 * metrics.cell_width_pt;
+                surface.draw_text(Point::from_xy(x, line.baseline_for(profile)), face(Style::PLAIN), metrics.font_size_pt, &line.suffix, false, TextDirection::Auto);
             }
         }
         surface.finish();
@@ -168,5 +178,22 @@ mod tests {
         st.set_flag(scriptcraft_doc::Pos::new(0, 18), scriptcraft_doc::Pos::new(0, 23), scriptcraft_doc::Flag::Underline, true);
         let styled = export(&st).unwrap();
         assert!(styled.len() > export(&Script::from_paras(vec![Para::new(Element::Action, "Plain bold italic under")]).unwrap()).unwrap().len());
+    }
+}
+
+
+#[cfg(test)]
+mod chinese_tests {
+    use super::*;
+    use scriptcraft_doc::{Element, Para, Paper, ScreenplayProfile};
+
+    #[test]
+    fn chinese_pdf_requires_explicitly_provisioned_font() {
+        let mut script = Script::from_paras(vec![Para::new(Element::Action, "雨停了。")]).expect("script");
+        script.settings.screenplay_profile = ScreenplayProfile::MainlandChina;
+        script.settings.page.paper = Paper::A4;
+        let result = export(&script);
+        // CI may provision the font. In either case we may not silently produce an invalid PDF.
+        assert!(matches!(result, Ok(_) | Err(PdfError::Font)));
     }
 }

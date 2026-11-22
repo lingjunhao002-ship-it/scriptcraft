@@ -12,6 +12,8 @@ pub fn specs() -> Vec<CommandSpec> {
             r#"{"paper": "letter"|"a4", "header": {"left", "center", "right": text with {page} {pages} {title} {author} {date} {revision} {revname} {revdate}}, "footer": {…same}, "headerFirstPage": bool, "footerFirstPage": bool, "headerOnTitlePage": bool, "titlePage": bool}"#,
         ),
         CommandSpec::new("page.reset", "Reset Page Setup", "Document › Page Setup", reset),
+        CommandSpec::new("script.profile.set", "Set Screenplay Profile", "Document › Screenplay Format", set_profile)
+            .params(r#"{"profile": "mainlandChina"|"hollywood"}"#),
     ]
 }
 
@@ -24,6 +26,8 @@ pub(crate) fn get(s: &mut Session, _: &Value) -> CmdResult {
     let st = &s.script.settings;
     let pg = &st.page;
     Ok(json!({
+        "profile": st.screenplay_profile.id(),
+        "profileName": st.screenplay_profile.name(),
         "paper": pg.paper.id(),
         "paperName": pg.paper.name(),
         "widthPt": pg.paper.width_pt(),
@@ -75,6 +79,31 @@ fn set(s: &mut Session, v: &Value) -> CmdResult {
     get(s, v)
 }
 
+fn set_profile(s: &mut Session, v: &Value) -> CmdResult {
+    let name = p::req_str(v, "profile")?;
+    let profile = scriptcraft_doc::ScreenplayProfile::parse(name)
+        .ok_or_else(|| CmdError::Params(format!("unknown screenplay profile `{name}`")))?;
+    s.script.settings.screenplay_profile = profile;
+    s.script.settings.elements = scriptcraft_doc::ElementFormats::for_profile(profile);
+    if profile == scriptcraft_doc::ScreenplayProfile::MainlandChina {
+        s.script.settings.page.paper = Paper::A4;
+        s.script.settings.more_contd = false;
+        s.script.settings.auto_contd = false;
+    } else {
+        s.script.settings.page.paper = Paper::Letter;
+        s.script.settings.elements = scriptcraft_doc::ElementFormats::default();
+        s.script.settings.more_contd = true;
+        s.script.settings.auto_contd = true;
+    }
+    s.invalidate();
+    Ok(json!({
+        "profile": profile.id(),
+        "profileName": profile.name(),
+        "paper": s.script.settings.page.paper.id(),
+        "elements": "profile defaults applied"
+    }))
+}
+
 fn reset(s: &mut Session, v: &Value) -> CmdResult {
     let paper = s.script.settings.page.paper;
     s.script.settings.page = Default::default();
@@ -112,5 +141,25 @@ mod tests {
         let v = s.run("page.reset", &json!({})).unwrap();
         assert_eq!(v["paper"], "a4", "reset keeps the paper");
         assert_eq!(v["footer"]["center"], "");
+    }
+}
+
+
+#[cfg(test)]
+mod profile_tests {
+    use serde_json::json;
+    use crate::Session;
+
+    #[test]
+    fn mainland_china_profile_selects_a4_and_chinese_element_defaults() {
+        let mut session = Session::sample();
+        let result = session.run("script.profile.set", &json!({"profile":"mainlandChina"})).expect("profile command");
+        assert_eq!(result["profile"], "mainlandChina");
+        assert_eq!(result["paper"], "a4");
+        assert_eq!(session.script.settings.page.paper, scriptcraft_doc::Paper::A4);
+        assert_eq!(session.script.settings.elements.get(scriptcraft_doc::Element::Action).left, 1.0);
+        assert!(!session.script.settings.more_contd);
+        session.run("edit.undo", &json!({})).expect("undo");
+        assert_eq!(session.script.settings.screenplay_profile, scriptcraft_doc::ScreenplayProfile::Hollywood);
     }
 }

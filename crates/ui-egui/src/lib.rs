@@ -861,6 +861,15 @@ impl ScriptApp {
         fonts.families.insert(egui::FontFamily::Name("courier-bold".into()), vec!["courier-badi-bold".into()]);
         fonts.families.insert(egui::FontFamily::Name("courier-italic".into()), vec!["courier-badi-italic".into()]);
         fonts.families.insert(egui::FontFamily::Name("courier-bolditalic".into()), vec!["courier-badi-bolditalic".into()]);
+        // The dedicated CJK family remains available even when the font is missing,
+        // but production PDF output refuses to silently substitute unsupported glyphs.
+        let mut cjk_family = Vec::new();
+        if let Some(bytes) = scriptcraft_fonts::load_chinese_regular() {
+            fonts.font_data.insert("cjk-regular".into(), std::sync::Arc::new(egui::FontData::from_owned(bytes)));
+            cjk_family.push("cjk-regular".into());
+        }
+        cjk_family.push("courier-badi".into());
+        fonts.families.insert(egui::FontFamily::Name("cjk".into()), cjk_family);
         for family in [egui::FontFamily::Proportional, egui::FontFamily::Monospace] {
             fonts.families.entry(family).or_default().push("courier-badi".into());
         }

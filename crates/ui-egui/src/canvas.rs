@@ -3,7 +3,7 @@
 use egui::{Align2, Color32, CornerRadius, FontFamily, FontId, Id, Key, Modifiers, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use scriptcraft_doc::{Element, Pos, word_left, word_right};
 use scriptcraft_engine::smarttype::{Suggest, suggest};
-use scriptcraft_geom::{CHAR_W, FONT_SIZE, LINE_H};
+use scriptcraft_geom::{CHAR_W, PageMetrics, ScreenplayProfile};
 use scriptcraft_layout::{Layout, Line, LineKind};
 use serde_json::json;
 
@@ -87,6 +87,14 @@ pub fn courier_styled(size: f32, st: scriptcraft_doc::Style) -> FontId {
         (true, true) => "courier-bolditalic",
     };
     FontId::new(size, FontFamily::Name(fam.into()))
+}
+
+fn screenplay_font(size: f32, st: scriptcraft_doc::Style, profile: ScreenplayProfile) -> FontId {
+    if profile == ScreenplayProfile::MainlandChina {
+        FontId::new(size, FontFamily::Name("cjk".into()))
+    } else {
+        courier_styled(size, st)
+    }
 }
 
 /// SmartType suggestions the popup would show now.
@@ -300,13 +308,23 @@ pub fn key_command(app: &mut ScriptApp, key: Key, m: Modifiers) {
 
 /// Screen rect of a line's columns `[c0, c1)` on page rect `pr`.
 pub(crate) fn cols_rect(pr: Rect, z: f32, l: &Line, c0: usize, c1: usize) -> Rect {
-    let x0 = pr.left() + (l.x + c0 as f32 * CHAR_W) * z;
-    let x1 = pr.left() + (l.x + c1 as f32 * CHAR_W) * z;
-    Rect::from_min_max(pos2(x0, pr.top() + l.y * z), pos2(x1, pr.top() + (l.y + LINE_H) * z))
+    cols_rect_profile(pr, z, l, c0, c1, ScreenplayProfile::Hollywood)
+}
+
+fn cols_rect_profile(pr: Rect, z: f32, l: &Line, c0: usize, c1: usize, profile: ScreenplayProfile) -> Rect {
+    let metrics = PageMetrics::for_profile(profile);
+    let x0 = pr.left() + (l.x + c0 as f32 * metrics.cell_width_pt) * z;
+    let x1 = pr.left() + (l.x + c1 as f32 * metrics.cell_width_pt) * z;
+    Rect::from_min_max(pos2(x0, pr.top() + l.y * z), pos2(x1, pr.top() + (l.y + metrics.line_height_pt) * z))
 }
 
 /// Selected column range of a body line, if any.
 pub(crate) fn selected_cols(l: &Line, a: Pos, b: Pos) -> Option<(usize, usize)> {
+    selected_cells(l, a, b, ScreenplayProfile::Hollywood)
+}
+
+fn selected_cells(l: &Line, a: Pos, b: Pos, profile: ScreenplayProfile) -> Option<(usize, usize)> {
+    let metrics = PageMetrics::for_profile(profile);
     let para = l.para?;
     if para < a.para || para > b.para || a == b {
         return None;
@@ -317,7 +335,7 @@ pub(crate) fn selected_cols(l: &Line, a: Pos, b: Pos) -> Option<(usize, usize)> 
     if from > to || (from == to && !eol) {
         return None;
     }
-    let col = |off: usize| l.text.get(..off.saturating_sub(l.start).min(l.text.len())).map_or(0, |t| t.chars().count());
+    let col = |off: usize| l.text.get(..off.saturating_sub(l.start).min(l.text.len())).map_or(0, |t| metrics.cells(t));
     Some((col(from), col(to) + usize::from(eol)))
 }
 
@@ -342,12 +360,14 @@ fn paint_page(ui: &Ui, app: &ScriptApp, l: &Layout, i: usize, pr: Rect, bad: &[(
     p.rect_stroke(pr, 2.0, Stroke::new(0.6, t.paper_edge), StrokeKind::Inside);
     let Some(page) = l.pages.get(i) else { return };
     let (a, b) = app.session.sel.ordered();
-    let font = courier(FONT_SIZE * z);
+    let profile = app.session.script.settings.screenplay_profile;
+    let metrics = PageMetrics::for_profile(profile);
+    let font = screenplay_font(metrics.font_size_pt * z, scriptcraft_doc::Style::PLAIN, profile);
     for line in &page.lines {
         if line.kind == LineKind::Body
-            && let Some((c0, c1)) = selected_cols(line, a, b)
+            && let Some((c0, c1)) = selected_cells(line, a, b, profile)
         {
-            p.rect_filled(cols_rect(pr, z, line, c0, c1), 0.0, t.selection);
+            p.rect_filled(cols_rect_profile(pr, z, line, c0, c1, profile), 0.0, t.selection);
         }
         crate::speech::paint_reading(app, p, line, pr, z);
         crate::annotations::paint_behind(app, p, line, pr, z);
@@ -358,22 +378,22 @@ fn paint_page(ui: &Ui, app: &ScriptApp, l: &Layout, i: usize, pr: Rect, bad: &[(
             LineKind::Header | LineKind::Footer | LineKind::More | LineKind::Contd | LineKind::SceneNumber => t.ink_soft,
             _ => t.ink,
         };
-        for (col, text, st) in line.segments() {
-            let x = line.x + col as f32 * CHAR_W;
+        for (col, text, st) in line.segments_for(profile) {
+            let x = line.x + col as f32 * metrics.cell_width_pt;
             let pos = pr.min + vec2(x * z, line.y * z + 0.5 * z);
-            p.text(pos, Align2::LEFT_TOP, text, courier_styled(FONT_SIZE * z, st), color);
+            p.text(pos, Align2::LEFT_TOP, text, screenplay_font(metrics.font_size_pt * z, st, profile), color);
             if st.underline {
-                let y = pr.top() + (line.baseline() + 1.8) * z;
-                let x1 = x + text.chars().count() as f32 * CHAR_W;
+                let y = pr.top() + (line.baseline_for(profile) + 1.8) * z;
+                let x1 = x + metrics.cells(text) as f32 * metrics.cell_width_pt;
                 p.line_segment([pos2(pr.left() + x * z, y), pos2(pr.left() + x1 * z, y)], Stroke::new(0.7 * z, color));
             }
         }
         // Spelling: a wavy red line under misspelled words.
         if let Some(para) = line.para {
             for &(_, a, b) in bad.iter().filter(|m| m.0 == para && m.2 > line.start && m.1 < line.end) {
-                let col = |off: usize| line.text.get(..off.clamp(line.start, line.end) - line.start).map_or(0, |t| t.chars().count());
-                let (x0, x1) = (pr.left() + (line.x + col(a) as f32 * CHAR_W) * z, pr.left() + (line.x + col(b) as f32 * CHAR_W) * z);
-                let y = pr.top() + (line.baseline() + 2.6) * z;
+                let col = |off: usize| line.text.get(..off.clamp(line.start, line.end) - line.start).map_or(0, |t| metrics.cells(t));
+                let (x0, x1) = (pr.left() + (line.x + col(a) as f32 * metrics.cell_width_pt) * z, pr.left() + (line.x + col(b) as f32 * metrics.cell_width_pt) * z);
+                let y = pr.top() + (line.baseline_for(profile) + 2.6) * z;
                 let step = 2.0 * z.max(0.6);
                 let mut pts = Vec::new();
                 let mut x = x0;
@@ -389,7 +409,7 @@ fn paint_page(ui: &Ui, app: &ScriptApp, l: &Layout, i: usize, pr: Rect, bad: &[(
             }
         }
         if !line.suffix.is_empty() {
-            let x = line.x + line.text.chars().count() as f32 * CHAR_W;
+            let x = line.x + metrics.cells(&line.text) as f32 * metrics.cell_width_pt;
             p.text(pr.min + vec2(x * z, line.y * z + 0.5 * z), Align2::LEFT_TOP, &line.suffix, font.clone(), t.ink_soft);
         }
     }

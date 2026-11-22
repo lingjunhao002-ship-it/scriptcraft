@@ -27,7 +27,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use scriptcraft_doc::{Element, Paper, Pos, Script, Span, character_name};
-use scriptcraft_geom::{BASELINE, CHAR_W, LINE_H, TOP, chars_between, inch};
+use scriptcraft_geom::{BASELINE, PageMetrics, ScreenplayProfile, chars_between, inch, wrap_chinese};
 
 mod decorate;
 pub use decorate::{body_rows, slots};
@@ -67,7 +67,21 @@ pub fn width_chars(e: Element) -> usize {
 
 fn width_in(script: &Script, e: Element) -> usize {
     let s = spec_in(script, e);
-    chars_between(inch(s.left), inch(s.right))
+    let metrics = PageMetrics::for_profile(script.settings.screenplay_profile);
+    if metrics.wide_chars {
+        let cols = ((inch(s.right) - inch(s.left)) / metrics.cell_width_pt).floor();
+        if cols.is_finite() && cols >= 1.0 { (cols as usize).min(10_000) } else { 1 }
+    } else {
+        chars_between(inch(s.left), inch(s.right))
+    }
+}
+
+fn wrap_in(script: &Script, text: &str, width: usize) -> Vec<(usize, usize)> {
+    if script.settings.screenplay_profile == ScreenplayProfile::MainlandChina {
+        wrap_chinese(text, width)
+    } else {
+        wrap(text, width)
+    }
 }
 
 /// What a laid-out line is.
@@ -120,19 +134,30 @@ impl Line {
     pub fn baseline(&self) -> f32 {
         self.y + BASELINE
     }
+
+    /// Baseline for a Chinese or Hollywood screenplay.
+    pub fn baseline_for(&self, profile: ScreenplayProfile) -> f32 {
+        self.y + PageMetrics::for_profile(profile).baseline_offset_pt
+    }
     /// The whole visible text.
     pub fn display(&self) -> String {
         format!("{}{}", self.text, self.suffix)
     }
     /// The text in styled segments: (column, text, style), covering the whole line.
     pub fn segments(&self) -> Vec<(usize, &str, scriptcraft_doc::Style)> {
+        self.segments_for(ScreenplayProfile::Hollywood)
+    }
+
+    /// Styled segments at visual-cell offsets (not Unicode code-point indices).
+    pub fn segments_for(&self, profile: ScreenplayProfile) -> Vec<(usize, &str, scriptcraft_doc::Style)> {
+        let measure = PageMetrics::for_profile(profile);
         let mut out = Vec::new();
         let mut at = 0;
         let mut col = 0;
         let push = |a: usize, b: usize, st, col: &mut usize, out: &mut Vec<_>| {
             if let Some(t) = self.text.get(a..b).filter(|t| !t.is_empty()) {
                 out.push((*col, t, st));
-                *col += t.chars().count();
+                *col += measure.cells(t);
             }
         };
         for sp in &self.spans {
@@ -142,9 +167,6 @@ impl Line {
         }
         push(at, self.text.len(), scriptcraft_doc::Style::PLAIN, &mut col, &mut out);
         out
-    }
-    fn chars(&self) -> usize {
-        self.text.chars().count()
     }
 }
 
@@ -180,6 +202,9 @@ pub struct Layout {
     pub para_page: Vec<usize>,
     /// The paper the pages are laid out on.
     pub paper: Paper,
+    /// Rendering profile; older serialised layouts default to the Hollywood profile.
+    #[serde(default, skip_serializing_if = "ScreenplayProfile::is_default")]
+    pub profile: ScreenplayProfile,
     /// For each page, the highest revision set with marks on it (`None`: unrevised).
     pub page_rev: Vec<Option<u8>>,
 }
@@ -189,7 +214,8 @@ impl Layout {
     pub fn page_height(&self, i: usize) -> f32 {
         let h = self.paper.height_pt();
         let Some(p) = self.pages.get(i) else { return h };
-        let bottom = p.lines.iter().filter(|l| l.kind != LineKind::Footer).map(|l| l.y + LINE_H).fold(0.0f32, f32::max) + scriptcraft_geom::BOTTOM;
+        let metrics = PageMetrics::for_profile(self.profile);
+        let bottom = p.lines.iter().filter(|l| l.kind != LineKind::Footer).map(|l| l.y + metrics.line_height_pt).fold(0.0f32, f32::max) + metrics.bottom_margin_pt;
         bottom.max(h)
     }
 
@@ -236,22 +262,24 @@ impl Layout {
     /// Where the caret for `pos` is drawn.
     pub fn caret(&self, pos: Pos) -> Option<Caret> {
         let (_, page, l) = self.line_of(pos)?;
-        let n = col_of(l, pos.off);
-        Some(Caret { page, x: l.x + n as f32 * CHAR_W, y: l.y, h: LINE_H })
+        let metrics = PageMetrics::for_profile(self.profile);
+        let n = col_of(l, pos.off, metrics);
+        Some(Caret { page, x: l.x + n as f32 * metrics.cell_width_pt, y: l.y, h: metrics.line_height_pt })
     }
 
     /// The position under a point on page `page` (points from the paper's top-left).
     pub fn hit(&self, page: usize, x: f32, y: f32) -> Option<Pos> {
         let p = self.pages.get(page)?;
+        let metrics = PageMetrics::for_profile(self.profile);
         let dist = |l: &Line| {
             let dy = if y < l.y {
                 l.y - y
-            } else if y >= l.y + LINE_H {
-                y - (l.y + LINE_H) + 0.001
+            } else if y >= l.y + metrics.line_height_pt {
+                y - (l.y + metrics.line_height_pt) + 0.001
             } else {
                 0.0
             };
-            let w = (l.chars() as f32 + 1.0) * CHAR_W;
+            let w = (metrics.cells(&l.text) as f32 + 1.0) * metrics.cell_width_pt;
             let dx = if x < l.x {
                 l.x - x
             } else if x > l.x + w {
@@ -262,17 +290,18 @@ impl Layout {
             dy * 1000.0 + dx
         };
         let l = p.lines.iter().filter(|l| l.kind == LineKind::Body && l.para.is_some()).min_by(|a, b| dist(a).total_cmp(&dist(b)))?;
-        Some(pos_at_x(l, x))
+        Some(pos_at_x(l, x, metrics))
     }
 
     /// The position one line up (`dir < 0`) or down from `pos`, keeping the goal x (points).
     /// Returns the new position and the goal x to keep.
     pub fn vertical(&self, pos: Pos, dir: i32, goal_x: Option<f32>) -> Option<(Pos, f32)> {
         let (k, _, l) = self.line_of(pos)?;
-        let gx = goal_x.unwrap_or(l.x + col_of(l, pos.off) as f32 * CHAR_W);
+        let metrics = PageMetrics::for_profile(self.profile);
+        let gx = goal_x.unwrap_or(l.x + col_of(l, pos.off, metrics) as f32 * metrics.cell_width_pt);
         let target = if dir < 0 { k.checked_sub(1)? } else { k + 1 };
         let (_, t) = self.body().nth(target)?;
-        Some((pos_at_x(t, gx), gx))
+        Some((pos_at_x(t, gx, metrics), gx))
     }
 
     /// The start or end of the visual line showing `pos`.
@@ -283,7 +312,7 @@ impl Layout {
 }
 
 /// Columns from the line's start to `off`.
-fn col_of(l: &Line, off: usize) -> usize {
+fn col_of(l: &Line, off: usize, metrics: PageMetrics) -> usize {
     if off <= l.start {
         return 0;
     }
@@ -293,17 +322,26 @@ fn col_of(l: &Line, off: usize) -> usize {
         while k2 > 0 && !l.text.is_char_boundary(k2) {
             k2 -= 1;
         }
-        return l.text.get(..k2).map_or(0, |t| t.chars().count());
+        return l.text.get(..k2).map_or(0, |t| metrics.cells(t));
     }
-    l.chars() + (off - l.end)
+    metrics.cells(&l.text) + (off - l.end)
 }
 
-fn pos_at_x(l: &Line, x: f32) -> Pos {
+fn pos_at_x(l: &Line, x: f32, metrics: PageMetrics) -> Pos {
     let para = l.para.unwrap_or(0);
-    let col = ((x - l.x) / CHAR_W).round();
-    let col = if col.is_finite() && col > 0.0 { col as usize } else { 0 };
-    let off = l.text.char_indices().nth(col).map_or(l.text.len(), |(i, _)| i);
-    Pos::new(para, l.start + off)
+    let target = ((x - l.x) / metrics.cell_width_pt).max(0.0);
+    if !target.is_finite() {
+        return Pos::new(para, l.start);
+    }
+    let mut cells = 0usize;
+    for (byte, ch) in l.text.char_indices() {
+        let next = cells.saturating_add(metrics.char_cells(ch));
+        if target < (cells as f32 + next as f32) / 2.0 {
+            return Pos::new(para, l.start + byte);
+        }
+        cells = next;
+    }
+    Pos::new(para, l.end)
 }
 
 /// Greedy word wrap at `width` characters: byte ranges of each line (spaces at the breaks belong
@@ -403,13 +441,19 @@ fn dual_item(script: &Script, para: usize, col: (f32, f32)) -> Option<Item> {
         Element::Parenthetical => (l + inch(0.4), r - inch(0.3)),
         _ => (l, r),
     };
-    Some(Item { para, el: p.element, lines: wrap(&p.text, chars_between(l, r)), suffix: String::new(), cols: Some((l, r)) })
+    let metrics = PageMetrics::for_profile(script.settings.screenplay_profile);
+    let width = if metrics.wide_chars {
+        (((r - l) / metrics.cell_width_pt).floor() as usize).max(1)
+    } else {
+        chars_between(l, r)
+    };
+    Some(Item { para, el: p.element, lines: wrap_in(script, &p.text, width), suffix: String::new(), cols: Some((l, r)) })
 }
 
 fn item(script: &Script, para: usize) -> Option<Item> {
     let p = script.paras.get(para)?;
     let spacing = usize::from(script.settings.elements.get(p.element).spacing).max(1);
-    Some(Item { para, el: p.element, lines: spaced(wrap(&p.text, width_in(script, p.element)), spacing), suffix: String::new(), cols: None })
+    Some(Item { para, el: p.element, lines: spaced(wrap_in(script, &p.text, width_in(script, p.element)), spacing), suffix: String::new(), cols: None })
 }
 
 /// A blank row between the lines of a double-spaced paragraph (no text, no caret).
@@ -504,7 +548,7 @@ fn units(script: &Script) -> Vec<Unit> {
 
 fn sentence_end(text: &str) -> bool {
     let t = text.trim_end().trim_end_matches(['"', '\'', ')', '”', '’']);
-    t.ends_with(['.', '?', '!', ':', '-', '—']) || t.ends_with("...")
+    t.ends_with(['.', '?', '!', ':', '-', '—', '。', '？', '！', '；', '：']) || t.ends_with("...") || t.ends_with("……")
 }
 
 struct Builder<'a> {
@@ -513,11 +557,12 @@ struct Builder<'a> {
     cur: Vec<Line>,
     row: usize,
     rows: usize,
+    metrics: PageMetrics,
 }
 
 impl Builder<'_> {
     fn y(&self) -> f32 {
-        TOP + self.row as f32 * LINE_H
+        self.metrics.top_margin_pt + self.row as f32 * self.metrics.line_height_pt
     }
 
     fn new_page(&mut self) {
@@ -550,10 +595,10 @@ impl Builder<'_> {
         let sfx = if suffix && k + 1 == it.lines.len() { it.suffix.clone() } else { String::new() };
         let s = spec_in(self.script, it.el);
         let (l, r) = it.cols.unwrap_or((inch(s.left), inch(s.right)));
-        let n = text.chars().count() + sfx.chars().count();
+        let n = self.metrics.cells(&text) + self.metrics.cells(&sfx);
         let x = match s.align {
-            Align::Right if it.cols.is_none() => (r - n as f32 * CHAR_W).max(l),
-            Align::Center if it.cols.is_none() => ((l + r - n as f32 * CHAR_W) / 2.0).max(l),
+            Align::Right if it.cols.is_none() => (r - n as f32 * self.metrics.cell_width_pt).max(l),
+            Align::Center if it.cols.is_none() => ((l + r - n as f32 * self.metrics.cell_width_pt) / 2.0).max(l),
             _ => l,
         };
         let y = self.y();
@@ -562,7 +607,7 @@ impl Builder<'_> {
             && self.script.settings.show_scene_numbers
             && let Some(num) = self.script.paras.get(it.para).and_then(|p| p.scene_number.clone())
         {
-            let w = num.chars().count() as f32 * CHAR_W;
+            let w = self.metrics.cells(&num) as f32 * self.metrics.cell_width_pt;
             self.cur.push(deco(LineKind::SceneNumber, inch(1.0) - w, y, &num));
             self.cur.push(deco(LineKind::SceneNumber, self.script.settings.page.paper.width_pt() - inch(0.75), y, &num));
         }
@@ -733,21 +778,23 @@ fn deco(kind: LineKind, x: f32, y: f32, text: &str) -> Line {
 fn title_page(script: &Script) -> Option<Page> {
     let t = &script.title;
     let paper = script.settings.page.paper;
+    let metrics = PageMetrics::for_profile(script.settings.screenplay_profile);
     let page_w = paper.width_pt();
     if !script.settings.title_page || t.is_empty() {
         return None;
     }
     if t.is_free_form() {
-        return Some(free_form_title_page(t, paper));
+        return Some(free_form_title_page(t, paper, metrics));
     }
     let mut lines = Vec::new();
-    let center = |s: &str| ((page_w - s.chars().count() as f32 * CHAR_W) / 2.0).max(inch(1.0));
+    let center = |s: &str| ((page_w - metrics.cells(s) as f32 * metrics.cell_width_pt) / 2.0).max(inch(1.0));
     let mut row = 18usize;
     let put_center = |lines: &mut Vec<Line>, v: &str, row: &mut usize| {
         for l in v.lines() {
-            for (s, e) in wrap(l.trim(), 60) {
+            let wrapped = if metrics.wide_chars { wrap_chinese(l.trim(), 60) } else { wrap(l.trim(), 60) };
+            for (s, e) in wrapped {
                 let text = l.trim().get(s..e).unwrap_or("");
-                lines.push(deco(LineKind::Title, center(text), TOP + *row as f32 * LINE_H, text));
+                lines.push(deco(LineKind::Title, center(text), metrics.top_margin_pt + *row as f32 * metrics.line_height_pt, text));
                 *row += 1;
             }
         }
@@ -763,45 +810,45 @@ fn title_page(script: &Script) -> Option<Page> {
     }
     // Contact (and copyright, notes) bottom-left; draft date bottom-right.
     let block: Vec<&str> = [&t.notes, &t.copyright, &t.contact].iter().flat_map(|v| v.lines()).map(str::trim).filter(|l| !l.is_empty()).collect();
-    let rows = body_rows(paper);
+    let rows = metrics.body_rows(paper.height_pt());
     let first = rows.saturating_sub(block.len()).max(row + 2);
     for (i, l) in block.iter().enumerate() {
-        lines.push(deco(LineKind::Title, inch(1.5), TOP + (first + i) as f32 * LINE_H, l));
+        lines.push(deco(LineKind::Title, inch(1.5), metrics.top_margin_pt + (first + i) as f32 * metrics.line_height_pt, l));
     }
     let dates: Vec<&str> = t.draft_date.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
     let first = rows.saturating_sub(dates.len()).max(row + 2);
     for (i, l) in dates.iter().enumerate() {
-        let x = (page_w - inch(1.0) - l.chars().count() as f32 * CHAR_W).max(inch(1.0));
-        lines.push(deco(LineKind::Title, x, TOP + (first + i) as f32 * LINE_H, l));
+        let x = (page_w - inch(1.0) - metrics.cells(l) as f32 * metrics.cell_width_pt).max(inch(1.0));
+        lines.push(deco(LineKind::Title, x, metrics.top_margin_pt + (first + i) as f32 * metrics.line_height_pt, l));
     }
     Some(Page { number: None, label: String::new(), title_page: true, lines })
 }
 
 /// A free-form title page: one row per line from the top margin, between 1" from each edge of
 /// the paper (as Final Draft lays out title pages), wrapped; rows past the page are dropped.
-fn free_form_title_page(t: &scriptcraft_doc::TitlePage, paper: scriptcraft_doc::Paper) -> Page {
+fn free_form_title_page(t: &scriptcraft_doc::TitlePage, paper: scriptcraft_doc::Paper, metrics: PageMetrics) -> Page {
     let page_w = paper.width_pt();
     let (left, right) = (inch(1.0), page_w - inch(1.0));
-    let cols = (((right - left) / CHAR_W) as usize).max(10);
-    let rows = body_rows(paper);
+    let cols = (((right - left) / metrics.cell_width_pt) as usize).max(10);
+    let rows = metrics.body_rows(paper.height_pt());
     let mut lines = Vec::new();
     let mut row = 0usize;
     for l in &t.lines {
         let text = l.text.trim();
-        let parts = if text.is_empty() { vec![(0, 0)] } else { wrap(text, cols) };
+        let parts = if text.is_empty() { vec![(0, 0)] } else if metrics.wide_chars { wrap_chinese(text, cols) } else { wrap(text, cols) };
         for (s, e) in parts {
             if row >= rows {
                 break;
             }
             let piece = text.get(s..e).unwrap_or("").trim_end();
-            let w = piece.chars().count() as f32 * CHAR_W;
+            let w = metrics.cells(piece) as f32 * metrics.cell_width_pt;
             let x = match l.align {
                 scriptcraft_doc::Align::Left => left,
                 scriptcraft_doc::Align::Center => (left + (right - left - w) / 2.0).max(left),
                 scriptcraft_doc::Align::Right => (right - w).max(left),
             };
             if !piece.is_empty() {
-                let mut line = deco(LineKind::Title, x, TOP + row as f32 * LINE_H, piece);
+                let mut line = deco(LineKind::Title, x, metrics.top_margin_pt + row as f32 * metrics.line_height_pt, piece);
                 if !l.style.is_plain() {
                     line.spans = vec![scriptcraft_doc::Span { start: 0, end: piece.len(), style: l.style }];
                 }
@@ -834,8 +881,8 @@ pub fn layout_with(script: &Script, mode: Mode) -> Layout {
     let speed = mode == Mode::Speed;
     // Speed view: effectively unlimited rows, so nothing ever breaks.
     let paper = script.settings.page.paper;
-    let rows = if speed { usize::MAX / 4 } else { body_rows(paper) };
-    let mut b = Builder { script, pages: Vec::new(), cur: Vec::new(), row: 0, rows };
+    let rows = if speed { usize::MAX / 4 } else { decorate::body_rows_for(script.settings.screenplay_profile, paper) };
+    let mut b = Builder { script, pages: Vec::new(), cur: Vec::new(), row: 0, rows, metrics: PageMetrics::for_profile(script.settings.screenplay_profile) };
     // Locked pages: each anchored unit starts a page; (first page index, its locked labels).
     let locked = !speed && script.settings.pages_locked;
     let anchor = |u: &Unit| if locked { locked::anchor(script, u.first_para()) } else { None };
@@ -899,7 +946,7 @@ pub fn layout_with(script: &Script, mode: Mode) -> Layout {
         }
         last = *s;
     }
-    Layout { pages, para_page, paper, page_rev }
+    Layout { pages, para_page, paper, profile: script.settings.screenplay_profile, page_rev }
 }
 
 /// Which paragraphs start a unit that can begin a locked page (the first paragraph of a scene
@@ -922,3 +969,5 @@ mod tests;
 mod tests_page;
 #[cfg(test)]
 mod tests_title;
+#[cfg(test)]
+mod tests_chinese;

@@ -43,6 +43,7 @@ pub use track::{Change, ChangeKind, TrackSettings};
 pub use voices::Voices;
 
 use serde::{Deserialize, Serialize};
+pub use scriptcraft_geom::ScreenplayProfile;
 
 /// Most paragraphs a script may hold (hostile files are refused beyond this).
 pub const MAX_PARAS: usize = 200_000;
@@ -367,6 +368,9 @@ impl TitlePage {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct Settings {
+    /// Screenplay typography and pagination profile. Old files default to Hollywood.
+    #[serde(default, skip_serializing_if = "ScreenplayProfile::is_default")]
+    pub screenplay_profile: ScreenplayProfile,
     /// Print scene numbers in both margins.
     pub show_scene_numbers: bool,
     /// (MORE) / (CONT'D) when dialogue breaks across pages.
@@ -404,6 +408,7 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Settings {
+            screenplay_profile: ScreenplayProfile::Hollywood,
             show_scene_numbers: false,
             more_contd: true,
             auto_contd: true,

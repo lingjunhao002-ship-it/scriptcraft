@@ -53,4 +53,20 @@ pub fn looks_like_heading(text: &str) -> bool {
     ["INT. ", "EXT. ", "INT./EXT. ", "EXT./INT. ", "I/E. ", "I/E ", "EST. ", "ИНТ. ", "НАТ. ", "ИНТ./НАТ. ", "НАТ./ИНТ. "]
         .iter()
         .any(|p| up.starts_with(p))
+        || (text.chars().any(|c| matches!(c as u32, 0x3400..=0x9FFF | 0x20000..=0x3FFFD))
+            && scriptcraft_fountain::is_heading(text))
+}
+
+
+#[cfg(test)]
+mod chinese_heading_tests {
+    use super::*;
+
+    #[test]
+    fn chinese_scene_heading_autorecognition() {
+        assert!(looks_like_heading("1. [内] 夜 咖啡馆"));
+        assert!(looks_like_heading("内景 医院走廊 日"));
+        assert!(!looks_like_heading("她看见窗边的林晚。"));
+        assert!(looks_like_heading("INT. DINER - NIGHT"));
+    }
 }

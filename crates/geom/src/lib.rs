@@ -4,6 +4,9 @@
 //! lines per inch. Everything here is in PDF points (1/72 inch) measured from the page's top-left.
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
+pub mod chinese;
+pub use chinese::{PageMetrics, ScreenplayProfile, display_cells, wrap_chinese};
+
 use serde::{Deserialize, Serialize};
 
 /// Points per inch.

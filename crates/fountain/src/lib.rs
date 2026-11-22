@@ -474,10 +474,37 @@ fn push_character(paras: &mut Vec<Para>, text: &str) {
 /// A natural scene heading: `INT.`, `EXT.`, `EST.`, `INT./EXT.`, `INT/EXT`, `I/E` followed by a
 /// dot or space.
 pub fn is_heading(line: &str) -> bool {
-    let up = line.trim_start().to_uppercase();
-    ["INT./EXT", "INT/EXT", "EXT./INT", "EXT/INT", "I/E", "INT", "EXT", "EST", "ИНТ./НАТ", "ИНТ/НАТ", "НАТ./ИНТ", "НАТ/ИНТ", "ИНТ", "НАТ"]
+    let text = line.trim_start();
+    let up = text.to_uppercase();
+    if ["INT./EXT", "INT/EXT", "EXT./INT", "EXT/INT", "I/E", "INT", "EXT", "EST", "ИНТ./НАТ", "ИНТ/НАТ", "НАТ./ИНТ", "НАТ/ИНТ", "ИНТ", "НАТ"]
         .iter()
         .any(|p| up.strip_prefix(p).is_some_and(|rest| rest.starts_with('.') || rest.starts_with(' ')))
+    {
+        return true;
+    }
+    // Chinese screenplay heading examples:
+    // "1. [内] 夜 咖啡馆", "1、咖啡馆。夜。内", "内景 咖啡馆 夜".
+    let digits = text.bytes().take_while(|b| b.is_ascii_digit()).count();
+    let after_number = text.get(digits..).unwrap_or("");
+    let (rest, numbered) = if digits > 0 {
+        let rest = after_number.chars().next().and_then(|mark| {
+            if matches!(mark, '.' | '．' | '、' | ' ') {
+                after_number.get(mark.len_utf8()..).map(str::trim_start)
+            } else {
+                None
+            }
+        });
+        (rest.unwrap_or(text), rest.is_some())
+    } else {
+        (text, false)
+    };
+    if ["内景", "外景", "内外景", "内/外景", "外/内景", "[内]", "[外]", "【内】", "【外】", "［内］", "［外］"]
+        .iter()
+        .any(|prefix| rest.strip_prefix(prefix).is_some_and(|tail| tail.is_empty() || tail.starts_with([' ', '：', ':', '—', '-'])))
+    {
+        return true;
+    }
+    numbered && rest.contains('。') && ["。内", "。外", "。内景", "。外景"].iter().any(|s| rest.trim_end().ends_with(s))
 }
 
 fn has_lowercase(s: &str) -> bool {
@@ -491,8 +518,18 @@ pub fn is_transition(line: &str) -> bool {
 
 /// A natural character cue: the name (before any extension) is all caps with a letter in it.
 pub fn is_character(line: &str) -> bool {
-    let name = line.trim_end_matches('^').split('(').next().unwrap_or("").trim();
-    !name.is_empty() && name.chars().any(char::is_alphabetic) && !has_lowercase(name)
+    let name = line.trim_end_matches('^').split(['(', '（']).next().unwrap_or("").trim();
+    if name.is_empty() || !name.chars().any(char::is_alphabetic) || has_lowercase(name) {
+        return false;
+    }
+    // Han characters have no uppercase/lowercase distinction. Without this guard almost
+    // every Chinese action paragraph followed by another line becomes a character cue.
+    let is_han = |c: char| matches!(c as u32, 0x3400..=0x9FFF | 0x20000..=0x3FFFD);
+    if name.chars().any(is_han) {
+        name.chars().count() <= 4 && name.chars().all(|c| is_han(c) || c == '·')
+    } else {
+        true
+    }
 }
 
 /// Write a script as Fountain.
@@ -674,3 +711,35 @@ mod element_tests;
 #[cfg(test)]
 #[path = "v04_tests.rs"]
 mod v04_tests;
+
+
+#[cfg(test)]
+mod chinese_profile_tests {
+    use super::*;
+
+    #[test]
+    fn natural_chinese_scene_headings_are_detected() {
+        assert!(is_heading("1. [内] 夜 咖啡馆"));
+        assert!(is_heading("1、咖啡馆。夜。内"));
+        assert!(is_heading("内景 医院走廊 日"));
+        assert!(is_heading("外景：学校门口 日"));
+        assert!(!is_heading("林晚走进咖啡馆，雨水顺着袖口滴落。"));
+    }
+
+    #[test]
+    fn chinese_action_does_not_become_character_name() {
+        assert!(is_character("林晚"));
+        assert!(is_character("周明（画外）"));
+        assert!(!is_character("林晚推开咖啡馆的门，走向吧台。"));
+        assert!(!is_character("林晚站起来"));
+        assert!(is_character("MARGO"));
+    }
+
+    #[test]
+    fn chinese_fountain_roundtrip_keeps_basic_elements() {
+        let source = "1. [内] 夜 咖啡馆\n\n△ 雨点敲打玻璃。\n\n林晚\n你终于来了。\n";
+        let doc = parse(source);
+        assert!(doc.paras.iter().any(|p| p.element == Element::SceneHeading));
+        assert!(doc.paras.iter().any(|p| p.element == Element::Dialogue));
+    }
+}
