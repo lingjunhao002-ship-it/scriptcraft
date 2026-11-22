@@ -2,10 +2,10 @@
 //!
 //! Screenplays are set in 12-point Courier on US Letter paper: ten characters per inch and six
 //! lines per inch. Everything here is in PDF points (1/72 inch) measured from the page's top-left.
+#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
+
 pub mod chinese;
 pub use chinese::{PageMetrics, ScreenplayProfile, display_cells, wrap_chinese};
-
-#![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use serde::{Deserialize, Serialize};
 
