@@ -217,7 +217,7 @@ MyScreenplayProject/
 
 ## 8. 中文排版方案
 
-新增独立 `Chinese Screenplay Profile`，与现有美式剧本 Profile 并存。至少验证：
+已建立独立 `MainlandChina` 档案和首版规则文档 `docs/CHINESE_SCREENPLAY_PROFILE.md`。档案为可覆盖的产品默认值，不宣称行业只有一种固定模板。当前已新增 CJK 度量与初版行禁则换行模块，并通过命令注册 `script.profile.set`；完整屏幕/PDF渲染尚未接通。至少验证：
 
 - 合法授权的 CJK 字体、字体回退与嵌入
 - 中日韩字符宽度、标点挤压/禁则和 UAX #14 换行规则
@@ -291,7 +291,8 @@ MyScreenplayProject/
 - [ ] 在 Windows runner 上执行实际构建并记录基线结果。
 - [ ] 对全部 Cargo 依赖做许可证审查并生成 SBOM。
 - [ ] 审查 Novel2Script 当前 HEAD 和完整 Python 依赖。
-- [ ] 选定中文剧本排版验收规范和字体方案。
+- [x] 选定中国大陆中文影视剧本为首版档案，并建立可覆盖的格式规范。
+- [ ] 固定并嵌入 Noto Sans SC / Noto Serif SC 字体及许可证材料。
 - [ ] 实现项目工作空间和 AI Runtime 最小纵向切片。
 - [ ] 实现 Agent 建议、Track Changes 和用户审批闭环。
 
