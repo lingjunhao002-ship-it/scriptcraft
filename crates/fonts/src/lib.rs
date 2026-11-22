@@ -16,6 +16,27 @@ pub const LICENSE: &str = include_str!("../fonts/OFL.txt");
 /// The family name.
 pub const FAMILY: &str = "Courier Badi";
 
+/// Load a redistributable CJK OpenType font supplied alongside the application or by an
+/// explicit environment variable. The font is deliberately not copied from Windows system
+/// fonts, whose PDF embedding permissions are not necessarily suitable for redistribution.
+///
+/// For a portable Windows package, place `NotoSansSC-Regular.otf` in the `fonts` directory next
+/// to `scriptcraft.exe`. For development, set `SCRIPTCRAFT_CJK_FONT` to an absolute OTF path.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn load_chinese_regular() -> Option<Vec<u8>> {
+    let from_env = std::env::var_os("SCRIPTCRAFT_CJK_FONT").map(std::path::PathBuf::from);
+    let packaged = std::env::current_exe()
+        .ok()
+        .and_then(|exe| exe.parent().map(|dir| dir.join("fonts").join("NotoSansSC-Regular.otf")));
+    from_env.or(packaged).and_then(|path| std::fs::read(path).ok()).filter(|bytes| !bytes.is_empty())
+}
+
+/// Browser builds require a separately provisioned embedded font asset.
+#[cfg(target_arch = "wasm32")]
+pub fn load_chinese_regular() -> Option<Vec<u8>> {
+    None
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
