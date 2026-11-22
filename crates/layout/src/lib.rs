@@ -27,7 +27,7 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 
 use scriptcraft_doc::{Element, Paper, Pos, Script, Span, character_name};
-use scriptcraft_geom::{BASELINE, CHAR_W, LINE_H, TOP, PageMetrics, ScreenplayProfile, chars_between, inch, wrap_chinese};
+use scriptcraft_geom::{BASELINE, PageMetrics, ScreenplayProfile, chars_between, inch, wrap_chinese};
 
 mod decorate;
 pub use decorate::{body_rows, slots};
