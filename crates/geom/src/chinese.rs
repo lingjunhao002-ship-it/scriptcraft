@@ -311,7 +311,7 @@ mod tests {
     fn cjk_display_width_counts_fullwidth_and_halfwidth_cells() {
         assert_eq!(display_cells("中文剧本"), 8);
         assert_eq!(display_cells("A1中文"), 6);
-        assert_eq!(display_cells("「你好，世界。」"), 14);
+        assert_eq!(display_cells("「你好，世界。」"), 16);
         assert_eq!(display_cells("e\u{0301}"), 1);
     }
 
