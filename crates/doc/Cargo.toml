@@ -9,6 +9,7 @@ description = "ScriptCraft screenplay model: element-typed paragraphs, title pag
 workspace = true
 
 [dependencies]
+scriptcraft-geom = { workspace = true }
 serde = { workspace = true }
 thiserror = { workspace = true }
 
