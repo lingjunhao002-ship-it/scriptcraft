@@ -3,7 +3,7 @@
 use egui::{Align2, Color32, CornerRadius, FontFamily, FontId, Id, Key, Modifiers, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
 use scriptcraft_doc::{Element, Pos, word_left, word_right};
 use scriptcraft_engine::smarttype::{Suggest, suggest};
-use scriptcraft_geom::{CHAR_W, FONT_SIZE, LINE_H, PageMetrics, ScreenplayProfile};
+use scriptcraft_geom::{CHAR_W, PageMetrics, ScreenplayProfile};
 use scriptcraft_layout::{Layout, Line, LineKind};
 use serde_json::json;
 
