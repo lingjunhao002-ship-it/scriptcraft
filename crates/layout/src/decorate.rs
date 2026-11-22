@@ -2,7 +2,7 @@
 
 use scriptcraft_doc::page_setup::{Fields, HeaderFooter, expand};
 use scriptcraft_doc::{Paper, Script};
-use scriptcraft_geom::{CHAR_W, LINE_H, PageMetrics, ScreenplayProfile, inch};
+use scriptcraft_geom::{PageMetrics, ScreenplayProfile, inch};
 
 use crate::{LineKind, Page, deco};
 
