@@ -969,7 +969,7 @@ mod chinese_profile_tests {
         script.settings.elements = ElementFormats::for_profile(ScreenplayProfile::MainlandChina);
         script.settings.page.paper = Paper::A4;
         let xml = write(&script);
-        assert!(xml.contains("ScreenplayProfile=\\\"mainlandChina\\\""));
+        assert!(xml.contains(r#"ScreenplayProfile="mainlandChina""#));
         let parsed = parse(&xml).expect("fdx");
         assert_eq!(parsed.settings.screenplay_profile, ScreenplayProfile::MainlandChina);
         assert_eq!(parsed.settings.page.paper, Paper::A4);
